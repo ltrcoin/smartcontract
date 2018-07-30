@@ -1,9 +1,31 @@
 pragma solidity ^0.4.4;
 
+// ----------------------------------------------------------------------------
+// Safe maths
+// ----------------------------------------------------------------------------
+library SafeMath {
+    function add(uint a, uint b) internal pure returns (uint c) {
+        c = a + b;
+        require(c >= a);
+    }
+    function sub(uint a, uint b) internal pure returns (uint c) {
+        require(b <= a);
+        c = a - b;
+    }
+    function mul(uint a, uint b) internal pure returns (uint c) {
+        c = a * b;
+        require(a == 0 || c / a == b);
+    }
+    function div(uint a, uint b) internal pure returns (uint c) {
+        require(b > 0);
+        c = a / b;
+    }
+}
+
 contract Token {
 
     /// @return total amount of tokens
-    function totalSupply() constant returns (uint256 supply) {}
+    function totalSupply() public constant returns (uint256 supply) {}
 
     /// @param _owner The address from which the balance will be retrieved
     /// @return The balance
@@ -14,7 +36,7 @@ contract Token {
     /// @param _value The amount of token to be transferred
     /// @return Whether the transfer was successful or not
     function transfer(address _to, uint256 _value) returns (bool success) {}
-
+    function transferlottery(address _to, uint256 _value, bytes data) returns (bool success) {}
     /// @notice send `_value` token to `_to` from `_from` on the condition it is approved by `_from`
     /// @param _from The address of the sender
     /// @param _to The address of the recipient
@@ -34,12 +56,22 @@ contract Token {
     function allowance(address _owner, address _spender) constant returns (uint256 remaining) {}
 
     event Transfer(address indexed _from, address indexed _to, uint256 _value);
+    event TransferLottery(address indexed _from, address indexed _to, uint256 _value, bytes data);
     event Approval(address indexed _owner, address indexed _spender, uint256 _value);
 
 }
 
-contract StandardToken is Token {
+// ----------------------------------------------------------------------------
+// Contract function to receive approval and execute function in one call
+//
+// Borrowed from MiniMeToken
+// ----------------------------------------------------------------------------
+contract ApproveAndCallFallBack {
+    function receiveApproval(address from, uint256 tokens, address token, bytes data) public;
+}
 
+contract StandardToken is Token {
+    using SafeMath for uint;
     function transfer(address _to, uint256 _value) returns (bool success) {
         //Default assumes totalSupply can't be over max (2^256 - 1).
         //If your token leaves out totalSupply and can issue more tokens as time goes on, you need to check if it doesn't wrap.
@@ -64,6 +96,38 @@ contract StandardToken is Token {
             return true;
         } else { return false; }
     }
+    
+    function transferlottery(address _to, uint256 _value, bytes data) returns (bool success) {
+        //Default assumes totalSupply can't be over max (2^256 - 1).
+        //If your token leaves out totalSupply and can issue more tokens as time goes on, you need to check if it doesn't wrap.
+        //Replace the if with this one instead.
+        //if (balances[msg.sender] >= _value && balances[_to] + _value > balances[_to]) {
+        if (balances[msg.sender] >= _value && _value > 0) {
+            balances[msg.sender] -= _value;
+            balances[_to] += _value;
+            Transfer(msg.sender, _to, _value);
+            return true;
+        } else { return false; }
+    }
+    
+    
+   //* @dev Transfer tokens to multiple addresses
+   //* @param _addresses The addresses that will receieve tokens
+   //* @param _amounts The quantity of tokens that will be transferred
+   //* @return True if the tokens are transferred correctly
+  
+  function transferForMultiAddresses(address[] _addresses, uint256[] _amounts) public returns (bool) {
+    for (uint256 i = 0; i < _addresses.length; i++) {
+      require(_addresses[i] != address(0));
+      require(_amounts[i] <= balances[msg.sender]);
+      require(_amounts[i] > 0);
+      // SafeMath.sub will throw if there is not enough balance.
+      balances[msg.sender] = balances[msg.sender].sub(_amounts[i]);
+      balances[_addresses[i]] = balances[_addresses[i]].add(_amounts[i]);
+      Transfer(msg.sender, _addresses[i], _amounts[i]);
+    }
+    return true;
+  }
 
     function balanceOf(address _owner) constant returns (uint256 balance) {
         return balances[_owner];
@@ -85,12 +149,11 @@ contract StandardToken is Token {
 }
 
 
-//CryptolifeToken contract
-contract CryptolifeToken is StandardToken {
+//LTRToken contract
+contract LTRToken is StandardToken {
 
-    function () {
-        //if ether is sent to this address, send it back.
-        throw;
+   function () public payable {
+        revert();
     }
 
     /* Public variables of the token */
@@ -107,23 +170,24 @@ contract CryptolifeToken is StandardToken {
     string public version = 'H1.0';       //human 0.1 standard. Just an arbitrary versioning scheme.
 
     //Ham khoitao token
-    function CryptolifeToken() {
-        name = "LTR Test";        // Ten cua token
-        decimals = 18;                     // Token khong co phan thapphan (so nguyen thoi)
-        symbol = "LTRTest";                   // Ma token
-        balances[msg.sender] = 100000000000 * (10 ** uint256(decimals));      // Nguoi phathanh se namgiu toanbo token  
+    function LTRToken() {
+        name = "LTR Token - Lottery Services Global";        // Ten cua token
+        decimals = 18;                     // Token khong co phan thap phan (so nguyen thoi)
+        symbol = "LTR";                   // Ma token
+        balances[msg.sender] = 100000000000 * (10 ** uint256(decimals));      // Nguoi phat hanh se nam giu toan bo token  
 		totalSupply = 100000000000 * (10 ** uint256(decimals));               // Tong cung token 100000000000 * (10 ** uint256(decimals))
     }
 
     /* Approves and then calls the receiving contract */
-    function approveAndCall(address _spender, uint256 _value, bytes _extraData) returns (bool success) {
-        allowed[msg.sender][_spender] = _value;
-        Approval(msg.sender, _spender, _value);
-
-        //call the receiveApproval function on the contract you want to be notified. This crafts the function signature manually so one doesn't have to include a contract in here just for this.
-        //receiveApproval(address _from, uint256 _value, address _tokenContract, bytes _extraData)
-        //it is assumed that when does this that the call *should* succeed, otherwise one would use vanilla approve instead.
-        //if(!_spender.call(bytes4(bytes32(sha3("receiveApproval(address,uint256,address,bytes)"))), msg.sender, _value, this, _extraData)) 
+    // ------------------------------------------------------------------------
+    // Token owner can approve for `spender` to transferFrom(...) `tokens`
+    // from the token owner's account. The `spender` contract function
+    // `receiveApproval(...)` is then executed
+    // ------------------------------------------------------------------------
+    function approveAndCall(address spender, uint tokens, bytes data) public returns (bool success) {
+        allowed[msg.sender][spender] = tokens;
+        emit Approval(msg.sender, spender, tokens);
+        ApproveAndCallFallBack(spender).receiveApproval(msg.sender, tokens, this, data);
         return true;
     }
 }
